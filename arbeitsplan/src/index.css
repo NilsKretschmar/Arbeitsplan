@@ -1,0 +1,107 @@
+:root {
+  --color-background-primary: #f8fbf1;
+  --color-background-secondary: #eef4da;
+  --color-background-tertiary: #dce7c5;
+  --color-border-tertiary: #bfd199;
+  --color-text-primary: #1f2b16;
+  --color-text-secondary: #506047;
+  --color-text-tertiary: #748468;
+  --color-text-danger: #b42318;
+  --color-text-info: #2367a7;
+  --border-radius-lg: 20px;
+  --border-radius-md: 14px;
+  --shadow-sm: 0 18px 40px rgba(42, 57, 30, 0.12);
+  --shadow-card: 0 10px 24px rgba(42, 57, 30, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--color-text-primary);
+  background:
+    radial-gradient(circle at top left, rgba(108, 151, 72, 0.12), transparent 18%),
+    linear-gradient(180deg, #f7f9f0 0%, #edf2e3 100%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button:active {
+  transform: translateY(0);
+}
+
+input,
+select {
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px 10px;
+  outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: #6a8f42;
+  box-shadow: 0 0 0 3px rgba(106, 143, 66, 0.15);
+}
+
+p,
+h1,
+h2,
+h3 {
+  margin-top: 0;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 16px;
+  color: var(--color-text-secondary);
+}
+
+button[style*="background:#639922"],
+button[style*="background:#0078D4"],
+button[style*="background:#d13438"],
+button[style*="background:#FFC107"],
+button[style*="background:#4285F4"],
+button[style*="background:#555555"] {
+  box-shadow: var(--shadow-sm);
+}
