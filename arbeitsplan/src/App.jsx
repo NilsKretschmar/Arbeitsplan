@@ -2,10 +2,8 @@ import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, get, onValue } from "firebase/database";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
-import { getPlannerCandidates } from "./planner";
 
 // ========== FIREBASE CONFIG ==========
-// TODO: Ersetze mit deinen Werten von Firebase Console
 const firebaseConfig = {
   apiKey: "AIzaSyAfmmOmURorl5LsFTBEWEduz_RZxW-rhjs",
   authDomain: "arbeitsplanstudis.firebaseapp.com",
@@ -61,16 +59,27 @@ function getUserColor(username, allUsers) {
   return index >= 0 ? USER_COLORS[index % USER_COLORS.length] : "#CCCCCC";
 }
 
-function getPlanTargets(workdaysCount) {
-  const targetCount = Math.max(1, Math.round(workdaysCount * 0.2));
-  const minTargetCount = Math.max(1, Math.round(workdaysCount * 0.1));
-  const maxTargetCount = Math.max(targetCount, Math.round(workdaysCount * 0.3));
+export function getFixedPlanSummary(plan, planFixed, username) {
+  return Object.entries(planFixed)
+    .filter(([, isFixed]) => isFixed)
+    .map(([monthKey]) => {
+      const [year, month] = monthKey.split('-').map(Number);
+      const dates = Object.entries(plan)
+        .filter(([dateStr, assignedUser]) => {
+          return assignedUser === username && dateStr.startsWith(`${year}-${String(month).padStart(2, '0')}-`);
+        })
+        .map(([dateStr]) => dateStr)
+        .sort((a, b) => a.localeCompare(b));
 
-  return {
-    targetCount,
-    minTargetCount,
-    maxTargetCount,
-  };
+      return {
+        monthKey,
+        year,
+        month: month - 1,
+        dates,
+      };
+    })
+    .filter(({ dates }) => dates.length > 0)
+    .sort((a, b) => b.monthKey.localeCompare(a.monthKey));
 }
 
 // ========== FIREBASE DATA ACCESS ==========
@@ -119,14 +128,12 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        // Benutzer ist eingeloggt
         const userData = await loadFromFirebase(`users/${user.uid}`);
         if (userData) {
           setCurrentUser({ ...userData, uid: user.uid });
           setAuthUser(user);
           setView("app");
         } else {
-          // Benutzer existiert nicht in Datenbank
           signOut(auth);
           setAuthUser(null);
           setView("login");
@@ -145,7 +152,6 @@ export default function App() {
   useEffect(() => {
     if (!authUser) return;
 
-    // Subscribe to all users
     const usersUnsub = subscribeToFirebase("users", (data) => {
       if (data) {
         const usersList = Object.entries(data).map(([uid, userData]) => ({
@@ -156,17 +162,14 @@ export default function App() {
       }
     });
 
-    // Subscribe to availability
     const availUnsub = subscribeToFirebase("availability", (data) => {
       if (data) setAvailability(data);
     });
 
-    // Subscribe to plan
     const planUnsub = subscribeToFirebase("plan", (data) => {
       if (data) setPlan(data);
     });
 
-    // Subscribe to planFixed
     const fixedUnsub = subscribeToFirebase("planFixed", (data) => {
       if (data) setPlanFixed(data);
     });
@@ -180,22 +183,20 @@ export default function App() {
   }, [authUser]);
 
   if (loading) {
-    return <div className="loading-screen">Lädt...</div>;
+    return <div style={{display:"flex",justifyContent:"center",alignItems:"center",height:"100vh",fontSize:16}}>Lädt...</div>;
   }
 
-  // ========== LOGIN / REGISTER VIEW ==========
   if (view === "login") {
     return <LoginRegisterView setView={setView} />;
   }
 
-  // ========== MAIN APP VIEW ==========
   const isAdmin = currentUser?.role === "admin";
   const currentUserHouse = currentUser?.house || "USZ";
   const todayStr = toDateStr(currentYear, currentMonth, today.getDate());
   const appTitle = currentUserHouse === "Triemli" ? "Triemli Arbeitsplan" : "USZeit";
 
   return (
-    <div className="app-shell">
+    <div style={{padding:"1.5rem",maxWidth:"1400px",margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.5rem"}}>
         <h1 style={{fontSize:24,fontWeight:500,margin:0}}>{appTitle}</h1>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -206,9 +207,9 @@ export default function App() {
       </div>
 
       <div style={{display:"flex",gap:8,marginBottom:"1.5rem",borderBottom:"0.5px solid var(--color-border-tertiary)",paddingBottom:8}}>
-        {(isAdmin ? ["availability","schedule","overview","admin"] : ["availability","schedule","profile"]).map(t => (
+        {(isAdmin ? ["availability","schedule","overview","admin","history"] : ["availability","schedule","profile","history"]).map(t => (
           <button key={t} onClick={()=>setActiveTab(t)} style={{background: activeTab===t ? "var(--color-background-secondary)" : "none", fontWeight: activeTab===t ? 500 : 400, border:"0.5px solid var(--color-border-tertiary)", padding:"6px 14px", borderRadius:"var(--border-radius-md)"}}>
-            {t==="availability" ? "Verfügbarkeit" : t==="schedule" ? "Plan" : t==="overview" ? "Übersicht" : t==="admin" ? "Admin" : "Profil"}
+            {t==="availability" ? "Verfügbarkeit" : t==="schedule" ? "Plan" : t==="overview" ? "Übersicht" : t==="admin" ? "Admin-Tools" : t==="profile" ? "Mein Profil" : "Verlauf"}
           </button>
         ))}
       </div>
@@ -253,6 +254,10 @@ export default function App() {
 
       {activeTab === "admin" && isAdmin && (
         <AdminToolsView users={users} setUsers={setUsers} />
+      )}
+
+      {activeTab === "history" && (
+        <HistoryView plan={plan} users={users} currentUser={currentUser} currentYear={currentYear} currentMonth={currentMonth} isAdmin={isAdmin} />
       )}
     </div>
   );
@@ -316,54 +321,16 @@ function LoginRegisterView({ setView }) {
 
       {mode === "login" ? (
         <>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          />
-          <input
-            type="password"
-            placeholder="Passwort"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          />
+          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}} />
+          <input type="password" placeholder="Passwort" value={password} onChange={e => setPassword(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}} />
         </>
       ) : (
         <>
-          <input
-            placeholder="Name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          />
-          <input
-            placeholder="Benutzername"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          />
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          />
-          <input
-            type="password"
-            placeholder="Passwort"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          />
-          <select
-            value={house}
-            onChange={e => setHouse(e.target.value)}
-            style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}
-          >
+          <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}} />
+          <input placeholder="Benutzername" value={username} onChange={e => setUsername(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}} />
+          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}} />
+          <input type="password" placeholder="Passwort" value={password} onChange={e => setPassword(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}} />
+          <select value={house} onChange={e => setHouse(e.target.value)} style={{width:"100%",marginBottom:8,boxSizing:"border-box",padding:"8px",border:"0.5px solid var(--color-border-tertiary)",borderRadius:4}}>
             <option value="USZ">USZ</option>
             <option value="Triemli">Triemli</option>
           </select>
@@ -372,18 +339,11 @@ function LoginRegisterView({ setView }) {
 
       {error && <p style={{color:"var(--color-text-danger)",fontSize:13,margin:"8px 0"}}>{error}</p>}
 
-      <button
-        onClick={mode === "login" ? handleLogin : handleRegister}
-        disabled={loading}
-        style={{width:"100%",marginBottom:8,padding:"8px",background:"#639922",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}
-      >
+      <button onClick={mode === "login" ? handleLogin : handleRegister} disabled={loading} style={{width:"100%",marginBottom:8,padding:"8px",background:"#639922",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}>
         {loading ? "Lädt..." : (mode === "login" ? "Anmelden" : "Konto erstellen")}
       </button>
 
-      <button
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-        style={{width:"100%",background:"none",border:"none",color:"var(--color-text-info)",cursor:"pointer",fontSize:14}}
-      >
+      <button onClick={() => setMode(mode === "login" ? "register" : "login")} style={{width:"100%",background:"none",border:"none",color:"var(--color-text-info)",cursor:"pointer",fontSize:14}}>
         {mode === "login" ? "Noch kein Konto? Registrieren" : "Zurück zum Login"}
       </button>
     </div>
@@ -418,7 +378,8 @@ function AvailabilityView({ users, currentUser, isAdmin, availability, setAvaila
   const nonAdminUsers = houseUsers.filter(u => u.role !== "admin");
   const displayUsers = isAdmin ? nonAdminUsers : [currentUser];
   const workdays = getWorkdaysInMonth(year, month);
-  const targetDays = Math.max(1, Math.round(workdays.length * 0.2));
+
+  // Pensum-Tracker Daten
   const trackerUsers = displayUsers.map(user => {
     const userAvail = getUserAvail(user.username, year, month);
     const greenDays = Object.values(userAvail).filter(v => v === 2).length;
@@ -428,7 +389,6 @@ function AvailabilityView({ users, currentUser, isAdmin, availability, setAvaila
       greenDays,
       yellowDays,
       percent: workdays.length > 0 ? Math.round((greenDays / workdays.length) * 100) : 0,
-      ratio: workdays.length > 0 ? greenDays / workdays.length : 0
     };
   });
 
@@ -459,15 +419,13 @@ function AvailabilityView({ users, currentUser, isAdmin, availability, setAvaila
           ))}
         </div>
 
-        <div style={{display:"grid",gap:"1rem"}}>
-          <PensumTracker
-            users={trackerUsers}
-            targetDays={targetDays}
-            workdays={workdays.length}
-            monthLabel={MONTHS_DE[month]}
-            year={year}
-          />
-        </div>
+        <PensumTracker
+          users={trackerUsers}
+          targetDays={Math.max(1, Math.round(workdays.length * 0.2))}
+          workdays={workdays.length}
+          monthLabel={MONTHS_DE[month]}
+          year={year}
+        />
       </div>
     </div>
   );
@@ -475,28 +433,28 @@ function AvailabilityView({ users, currentUser, isAdmin, availability, setAvaila
 
 function PensumTracker({ users, targetDays, workdays, monthLabel, year }) {
   return (
-    <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem",boxShadow:"var(--shadow-card)"}}>
+    <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:12,marginBottom:12}}>
         <div>
           <h3 style={{fontSize:15,fontWeight:500,marginBottom:4}}>Pensum-Tracker</h3>
           <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{monthLabel} {year}</div>
         </div>
-        <div style={{fontSize:12,padding:"4px 8px",background:"var(--color-background-secondary)",borderRadius:999,color:"var(--color-text-primary)"}}>
-          Ziel: {targetDays} Tage = 20%
+        <div style={{fontSize:12,padding:"4px 8px",background:"var(--color-background-secondary)",borderRadius:999}}>
+          Ziel: {targetDays} Tage
         </div>
       </div>
 
       <div style={{display:"grid",gap:12}}>
         {users.map(user => {
           const progress = Math.min((user.greenDays / targetDays) * 100, 100);
-          const status = user.greenDays >= targetDays ? "im Ziel" : user.greenDays >= targetDays * 0.8 ? "nahe am Ziel" : "unter Ziel";
+          const status = user.greenDays >= targetDays ? "✓ Erreicht" : user.greenDays >= targetDays * 0.8 ? "~ Nahe dran" : "○ Noch nicht";
 
           return (
             <div key={user.username} style={{padding:"10px",background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)"}}>
               <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:8}}>
                 <div>
                   <div style={{fontWeight:500,fontSize:14}}>{user.name}</div>
-                  <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{user.greenDays} grüne Tage • {user.yellowDays} gelbe Tage</div>
+                  <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{user.greenDays}🟢 {user.yellowDays}🟡</div>
                 </div>
                 <div style={{fontSize:12,fontWeight:500,color: user.greenDays >= targetDays ? "#2f5d18" : "#8b5e00"}}>
                   {user.percent}%
@@ -508,7 +466,7 @@ function PensumTracker({ users, targetDays, workdays, monthLabel, year }) {
               </div>
 
               <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>
-                {status} • {workdays} Arbeitstage in diesem Monat
+                {status}
               </div>
             </div>
           );
@@ -529,7 +487,6 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
   const isMonthFixed = planFixed[monthKey] || false;
   const canEdit = isAdmin && !isMonthFixed;
   const workdays = getWorkdaysInMonth(year, month);
-  const planTargets = getPlanTargets(workdays.length);
 
   const planUsers = users.filter(u => u.role !== "admin" && !u.archived);
   const planStats = planUsers.map(user => {
@@ -550,6 +507,9 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
       status,
     };
   });
+  const fixedPlanSummary = !isAdmin && currentUser
+    ? getFixedPlanSummary(plan, planFixed, currentUser.username)
+    : [];
 
   async function generatePlan() {
     const allUsersForPlan = users.filter(u => u.role !== "admin" && !u.archived);
@@ -560,21 +520,33 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
 
     const newPlan = {};
     const userCounts = {};
+    const preferredDaysPerUser = 4;
+    const maxDaysPerUser = 5;
+    const target = Math.min(Math.round(workdays.length * 0.2), preferredDaysPerUser);
 
     allUsersForPlan.forEach(u => {
       userCounts[u.username] = 0;
     });
 
     workdays.forEach((ds) => {
-      const candidates = getPlannerCandidates({
-        users: allUsersForPlan,
-        availability,
-        year,
-        month,
-        dateStr: ds,
-        userCounts,
-        targetCount: planTargets.targetCount,
-        maxTargetCount: planTargets.maxTargetCount,
+      let candidates = allUsersForPlan.filter(u => {
+        const key = `${u.username}_${year}_${month}`;
+        const avail = availability[key] || {};
+        return (avail[ds] || 0) > 0 && userCounts[u.username] < maxDaysPerUser;
+      });
+
+      candidates = candidates.sort((a, b) => {
+        const gapA = target - userCounts[a.username];
+        const gapB = target - userCounts[b.username];
+        if (gapB !== gapA) return gapB - gapA;
+
+        const key_a = `${a.username}_${year}_${month}`;
+        const key_b = `${b.username}_${year}_${month}`;
+        const avA = (availability[key_a] || {})[ds] || 0;
+        const avB = (availability[key_b] || {})[ds] || 0;
+        if (avB !== avA) return avB - avA;
+
+        return a.name.localeCompare(b.name);
       });
 
       if (candidates.length > 0) {
@@ -635,44 +607,72 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
       </div>
 
       <div style={{display:"grid",gridTemplateColumns: isAdmin ? "minmax(0, 2fr) minmax(300px, 1fr)" : "1fr",gap:"1.5rem",alignItems:"start"}}>
-        <MonthSchedule
-          year={year}
-          month={month}
-          plan={plan}
-          users={users}
-          workdays={workdays}
-          canEdit={canEdit}
-          isAdmin={isAdmin}
-          currentUser={currentUser}
-          addServiceDay={addServiceDay}
-          removeServiceDay={removeServiceDay}
-          todayStr={todayStr}
-          editMode={editMode}
-          setEditMode={setEditMode}
-          selectedUser={selectedUser}
-          setSelectedUser={setSelectedUser}
-        />
+        <div style={{display:"grid",gap:"1rem"}}>
+          {!isAdmin && fixedPlanSummary.length > 0 && (
+            <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
+              <h3 style={{fontSize:15,fontWeight:500,marginBottom:8}}>Meine fixierten Arbeitstage</h3>
+              <p style={{fontSize:13,color:"var(--color-text-secondary)",marginBottom:12}}>
+                Deine Arbeitstage für fixierte Monate sind hier monatlich zusammengefasst.
+              </p>
+              <div style={{display:"grid",gap:10}}>
+                {fixedPlanSummary.map(({ monthKey, year, month, dates }) => (
+                  <div key={monthKey} style={{background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)",padding:"0.85rem"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:8,alignItems:"baseline"}}>
+                      <div style={{fontSize:14,fontWeight:500}}>{MONTHS_DE[month]} {year}</div>
+                      <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{dates.length} Arbeitstage</div>
+                    </div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {dates.map((dateStr) => (
+                        <span key={dateStr} style={{fontSize:12,padding:"4px 8px",borderRadius:999,background:"white",border:"1px solid var(--color-border-tertiary)",color:"var(--color-text-primary)"}}>
+                          {dateStr.slice(8)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <MonthSchedule
+            year={year}
+            month={month}
+            plan={plan}
+            users={users}
+            workdays={workdays}
+            canEdit={canEdit}
+            isAdmin={isAdmin}
+            currentUser={currentUser}
+            addServiceDay={addServiceDay}
+            removeServiceDay={removeServiceDay}
+            todayStr={todayStr}
+            editMode={editMode}
+            setEditMode={setEditMode}
+            selectedUser={selectedUser}
+            setSelectedUser={setSelectedUser}
+          />
+        </div>
 
         {isAdmin && (
-          <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem",boxShadow:"var(--shadow-card)"}}>
-            <h3 style={{fontSize:15,fontWeight:500,marginBottom:12}}>Live-Pensum-Tracker</h3>
+          <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
+            <h3 style={{fontSize:15,fontWeight:500,marginBottom:12}}>Live-Tracker</h3>
             <p style={{fontSize:13,color:"var(--color-text-secondary)",marginBottom:12}}>
-              Die Werte aktualisieren sich sofort bei manuellen Änderungen im Plan.
+              Aktualisiert in Echtzeit
             </p>
 
             <div style={{display:"grid",gap:10}}>
               {planStats.map(user => {
-                const color = user.percentage < 10 || user.percentage > 30 ? "#d13438" : "#639922";
                 const barColor = user.percentage >= 20 ? "#5f8b3f" : "#8fb55e";
+                const statusColor = user.percentage < 10 || user.percentage > 30 ? "#d13438" : "#639922";
 
                 return (
                   <div key={user.username} style={{padding:"10px",background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)"}}>
                     <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:8}}>
                       <div>
                         <div style={{fontWeight:500,fontSize:14}}>{user.name}</div>
-                        <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{user.plannedDays} Tage geplant</div>
+                        <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>{user.plannedDays} Tage</div>
                       </div>
-                      <div style={{fontSize:12,fontWeight:500,color}}>
+                      <div style={{fontSize:12,fontWeight:500,color:statusColor}}>
                         {user.percentage}%
                       </div>
                     </div>
@@ -682,7 +682,7 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
                     </div>
 
                     <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>
-                      {user.status} • Änderung gegenüber 20%: {user.delta >= 0 ? `+${user.delta}%` : `${user.delta}%`}
+                      {user.status}
                     </div>
                   </div>
                 );
@@ -788,10 +788,7 @@ function AdminToolsView({ users, setUsers }) {
               <div style={{fontWeight:500}}>{u.name}</div>
               <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>@{u.username} • {u.house}</div>
             </div>
-            <button
-              onClick={() => toggleArchive(u.uid)}
-              style={{fontSize:11,padding:"4px 8px",background:"#FFC107",color:"white",border:"none",borderRadius:3,cursor:"pointer"}}
-            >
+            <button onClick={() => toggleArchive(u.uid)} style={{fontSize:11,padding:"4px 8px",background:"#FFC107",color:"white",border:"none",borderRadius:3,cursor:"pointer"}}>
               📦 Archiv
             </button>
           </div>
@@ -806,14 +803,93 @@ function AdminToolsView({ users, setUsers }) {
               <div>
                 <div style={{fontWeight:500}}>{u.name}</div>
               </div>
-              <button
-                onClick={() => toggleArchive(u.uid)}
-                style={{fontSize:11,padding:"4px 8px",background:"#639922",color:"white",border:"none",borderRadius:3,cursor:"pointer"}}
-              >
+              <button onClick={() => toggleArchive(u.uid)} style={{fontSize:11,padding:"4px 8px",background:"#639922",color:"white",border:"none",borderRadius:3,cursor:"pointer"}}>
                 ↩️ Reaktivieren
               </button>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ========== HISTORY VIEW ==========
+function HistoryView({ plan, users, currentUser, currentYear, currentMonth, isAdmin }) {
+  const today = new Date();
+
+  const monthPlans = {};
+  Object.entries(plan).forEach(([dateStr, username]) => {
+    const [y, m] = dateStr.split('-').map(Number);
+    const monthKey = `${y}-${String(m).padStart(2, '0')}`;
+    if (!monthPlans[monthKey]) monthPlans[monthKey] = [];
+    monthPlans[monthKey].push({ date: dateStr, user: username });
+  });
+
+  const sortedMonths = Object.keys(monthPlans).sort().reverse();
+  const pastMonths = sortedMonths.filter(k => {
+    const [y, m] = k.split('-').map(Number);
+    const date = new Date(y, m - 1, 1);
+    return date < today;
+  });
+
+  return (
+    <div>
+      <h2 style={{fontSize:18,fontWeight:500,marginBottom:"1.5rem"}}>Plan-Verlauf</h2>
+
+      {pastMonths.length === 0 ? (
+        <p style={{color:"var(--color-text-secondary)"}}>Keine vergangenen Pläne vorhanden.</p>
+      ) : (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(350px,1fr))",gap:"1.5rem"}}>
+          {pastMonths.map(monthKey => {
+            const [year, month] = monthKey.split('-').map(Number);
+            const workdays = getWorkdaysInMonth(year, month - 1);
+            const entries = monthPlans[monthKey];
+
+            if (!isAdmin) {
+              const myDays = entries.filter(e => e.user === currentUser?.username);
+              if (myDays.length === 0) return null;
+
+              return (
+                <div key={monthKey} style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
+                  <h3 style={{fontSize:15,fontWeight:500,marginBottom:12}}>📅 {MONTHS_DE[month - 1]} {year}</h3>
+                  <div>
+                    {myDays.map((e, idx) => (
+                      <div key={idx} style={{fontSize:13,padding:"6px 0",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                        <strong>{e.date}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            const userDays = {};
+            entries.forEach(e => {
+              if (!userDays[e.user]) userDays[e.user] = [];
+              userDays[e.user].push(e.date);
+            });
+
+            return (
+              <div key={monthKey} style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
+                <h3 style={{fontSize:15,fontWeight:500,marginBottom:12}}>📅 {MONTHS_DE[month - 1]} {year}</h3>
+                <div style={{fontSize:12,color:"var(--color-text-secondary)",marginBottom:10}}>
+                  {entries.length} / {workdays.length} Tage besetzt
+                </div>
+                {Object.entries(userDays).map(([username, days]) => {
+                  const user = users.find(u => u.username === username);
+                  return (
+                    <div key={username} style={{marginBottom:12,padding:8,background:"var(--color-background-secondary)",borderRadius:4}}>
+                      <div style={{fontSize:13,fontWeight:500,marginBottom:4}}>{user?.name || username}</div>
+                      <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>
+                        {days.length} Tage: {days.join(", ")}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -837,8 +913,11 @@ function MonthCalendar({ year, month, user, currentUser, availability, onToggle,
     }
   }
 
+  const greenDays = Object.values(availability).filter(v => v === 2).length;
+  const yellowDays = Object.values(availability).filter(v => v === 1).length;
+
   return (
-    <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem",boxShadow:"var(--shadow-card)"}}>
+    <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
       <h3 style={{fontSize:15,fontWeight:500,marginBottom:12}}>{user.name} - {MONTHS_DE[month]} {year}</h3>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:2,marginBottom:8}}>
@@ -871,7 +950,7 @@ function MonthCalendar({ year, month, user, currentUser, availability, onToggle,
               <div
                 key={di}
                 onClick={() => isWorkday && !readOnly && onToggle && onToggle(ds)}
-                style={{background:bg,color,border:"1px solid #dfe8ca",borderRadius:4,padding:"4px 2px",textAlign:"center",fontSize:11,fontWeight:500,cursor: isWorkday && !readOnly ? "pointer" : "default",minHeight:28,display:"flex",alignItems:"center",justifyContent:"center",boxShadow: val === 2 ? "inset 0 0 0 1px rgba(47,93,24,0.12)" : "none"}}
+                style={{background:bg,color,border:"1px solid #dfe8ca",borderRadius:4,padding:"4px 2px",textAlign:"center",fontSize:11,fontWeight:500,cursor: isWorkday && !readOnly ? "pointer" : "default",minHeight:28,display:"flex",alignItems:"center",justifyContent:"center"}}
               >
                 {d}
               </div>
@@ -879,6 +958,11 @@ function MonthCalendar({ year, month, user, currentUser, availability, onToggle,
           })}
         </div>
       ))}
+
+      <div style={{display:"flex",gap:8,marginTop:8,fontSize:11,color:"var(--color-text-secondary)"}}>
+        <span style={{background:"#dcecc3",color:"#2f5d18",padding:"2px 6px",borderRadius:3}}>● {greenDays} grün</span>
+        <span style={{background:"#fff1c8",color:"#7f5f16",padding:"2px 6px",borderRadius:3}}>● {yellowDays} gelb</span>
+      </div>
     </div>
   );
 }
@@ -952,7 +1036,7 @@ function MonthSchedule({ year, month, plan, users, workdays, canEdit, isAdmin, c
                     removeServiceDay(ds);
                   }
                 }}
-                style={{background:bg,color,border,borderRadius:4,padding:"6px 2px",textAlign:"center",fontSize:11,fontWeight:500,cursor: isWorkday ? "pointer" : "default",minHeight:50,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",boxShadow: assignedUser ? "inset 0 0 0 1px rgba(255,255,255,0.14)" : "none"}}
+                style={{background:bg,color,border,borderRadius:4,padding:"6px 2px",textAlign:"center",fontSize:11,fontWeight:500,cursor: isWorkday ? "pointer" : "default",minHeight:50,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}
               >
                 <div style={{fontWeight:600}}>{d}</div>
                 {user && <div style={{fontSize:8,marginTop:2,opacity:0.9}}>{user.name.split(" ")[0]}</div>}
@@ -961,36 +1045,6 @@ function MonthSchedule({ year, month, plan, users, workdays, canEdit, isAdmin, c
           })}
         </div>
       ))}
-
-      <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--color-border-tertiary)"}}>
-        <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"center",marginBottom:12}}>
-          <div style={{fontSize:12,fontWeight:500,color:"var(--color-text-primary)"}}>Arbeitsprozente</div>
-          <div style={{fontSize:12,color:"var(--color-text-secondary)"}}>Ziel: 20% · Toleranz: 10%–30%</div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-            <div style={{width:16,height:16,background:"#dcecc3",borderRadius:3}}/>
-            <span>Grün bevorzugt</span>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-            <div style={{width:16,height:16,background:"#fff1c8",borderRadius:3}}/>
-            <span>Gelb als Fallback</span>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-            <div style={{width:16,height:16,background:"#eef2e3",border:"1px dashed #cfd9b9",borderRadius:3}}/>
-            <span>Feiertage / nicht Arbeitstag</span>
-          </div>
-        </div>
-      </div>
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,marginTop:12}}>
-        {allUsers.map(u => (
-          <div key={u.username} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-            <div style={{width:16,height:16,background:getUserColor(u.username, allUsers),borderRadius:3}}/>
-            <span>{u.name}</span>
-          </div>
-        ))}
-      </div>
 
       {canEdit && (
         <button onClick={() => setEditMode(!editMode)} style={{marginTop:12,fontSize:12,padding:"6px 12px",background:editMode ? "#d13438" : "#639922",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}>
