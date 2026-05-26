@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, get, onValue } from "firebase/database";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { mergePlanData, mergePlanFixedData } from "./planStorage";
 
 // ========== FIREBASE CONFIG ==========
 const firebaseConfig = {
@@ -556,28 +557,29 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
       }
     });
 
-    setPlan(newPlan);
-    await saveToFirebase(`plan/${monthKey}`, newPlan);
+    const updatedPlan = mergePlanData(plan, newPlan);
+    setPlan(updatedPlan);
+    await saveToFirebase("plan", updatedPlan);
     alert(`Plan für ${MONTHS_DE[month]} ${year} erstellt!`);
   }
 
   async function addServiceDay(dateStr, username) {
-    const newPlan = {...plan, [dateStr]: username};
-    setPlan(newPlan);
-    await saveToFirebase(`plan/${dateStr}`, username);
+    const updatedPlan = mergePlanData(plan, { [dateStr]: username });
+    setPlan(updatedPlan);
+    await saveToFirebase("plan", updatedPlan);
   }
 
   async function removeServiceDay(dateStr) {
-    const newPlan = {...plan};
-    delete newPlan[dateStr];
-    setPlan(newPlan);
-    await saveToFirebase(`plan/${dateStr}`, null);
+    const updatedPlan = { ...plan };
+    delete updatedPlan[dateStr];
+    setPlan(updatedPlan);
+    await saveToFirebase("plan", updatedPlan);
   }
 
   async function togglePlanFixed() {
-    const newFixed = {...planFixed, [monthKey]: !isMonthFixed};
-    setPlanFixed(newFixed);
-    await saveToFirebase(`planFixed/${monthKey}`, !isMonthFixed);
+    const updatedFixed = mergePlanFixedData(planFixed, monthKey, !isMonthFixed);
+    setPlanFixed(updatedFixed);
+    await saveToFirebase("planFixed", updatedFixed);
   }
 
   return (
