@@ -477,6 +477,96 @@ function PensumTracker({ users, targetDays, workdays, monthLabel, year }) {
   );
 }
 
+// ========== HELPER: PLAN GENERIERUNG FÜR FREIE TAGE ==========
+function generatePlanForFreeDaysOnly(
+  plan,
+  availability,
+  users,
+  year,
+  month,
+  getWorkdaysInMonth
+) {
+  const workdays = getWorkdaysInMonth(year, month);
+  const allUsers = users.filter(u => u.role !== "admin" && !u.archived);
+
+  if (allUsers.length === 0) return null;
+
+  const newPlan = { ...plan };
+  const userCounts = {};
+  const maxDaysPerUser = 4;
+
+  allUsers.forEach(u => {
+    const existing = Object.entries(plan).filter(([ds, username]) => {
+      const [y, m] = ds.split('-').map(Number);
+      return username === u.username && y === year && m === month + 1;
+    }).length;
+    userCounts[u.username] = existing;
+  });
+
+  const weekGroups = {};
+  workdays.forEach(ds => {
+    const date = new Date(ds + "T00:00:00");
+    const weekNum = Math.ceil((date - new Date(date.getFullYear(), 0, 1)) / 86400000 / 7);
+    if (!weekGroups[weekNum]) weekGroups[weekNum] = [];
+    weekGroups[weekNum].push(ds);
+  });
+
+  Object.keys(weekGroups)
+    .sort((a, b) => a - b)
+    .forEach(weekNum => {
+      const daysInWeek = weekGroups[weekNum];
+      const freeDaysInWeek = daysInWeek.filter(ds => !newPlan[ds]);
+
+      if (freeDaysInWeek.length === 0) return;
+
+      const targetDay = freeDaysInWeek[0];
+
+      let candidates = allUsers.filter(u => {
+        const key = `${u.username}_${year}_${month}`;
+        const avail = availability[key] || {};
+        return (avail[targetDay] || 0) > 0 && userCounts[u.username] < maxDaysPerUser;
+      });
+
+      if (candidates.length === 0) return;
+
+      candidates.sort((a, b) => userCounts[a.username] - userCounts[b.username]);
+      const chosen = candidates[0];
+      newPlan[targetDay] = chosen.username;
+      userCounts[chosen.username]++;
+    });
+
+  workdays.forEach(ds => {
+    if (newPlan[ds]) return;
+
+    let candidates = allUsers.filter(u => {
+      const key = `${u.username}_${year}_${month}`;
+      const avail = availability[key] || {};
+      return (avail[ds] || 0) > 0 && userCounts[u.username] < maxDaysPerUser;
+    });
+
+    if (candidates.length === 0) return;
+
+    candidates.sort((a, b) => {
+      const countDiff = userCounts[a.username] - userCounts[b.username];
+      if (countDiff !== 0) return countDiff;
+
+      const key_a = `${a.username}_${year}_${month}`;
+      const key_b = `${b.username}_${year}_${month}`;
+      const avA = (availability[key_a] || {})[ds] || 0;
+      const avB = (availability[key_b] || {})[ds] || 0;
+      if (avB !== avA) return avB - avA;
+
+      return a.name.localeCompare(b.name);
+    });
+
+    const chosen = candidates[0];
+    newPlan[ds] = chosen.username;
+    userCounts[chosen.username]++;
+  });
+
+  return newPlan;
+}
+
 // ========== SCHEDULE VIEW ==========
 function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, setPlanFixed, availability, currentYear, currentMonth, today, todayStr }) {
   const [year, setYear] = useState(currentYear);
