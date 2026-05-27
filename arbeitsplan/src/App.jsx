@@ -652,7 +652,26 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
     await saveToFirebase("plan", updatedPlan);
     alert(`Plan für ${MONTHS_DE[month]} ${year} erstellt!`);
   }
+async function generatePlanForFreeDaysOnly_Handler() {
+  const newPlanData = generatePlanForFreeDaysOnly(
+    plan,
+    availability,
+    users,
+    year,
+    month,
+    getWorkdaysInMonth
+  );
 
+  if (!newPlanData) {
+    alert("Keine Benutzer vorhanden.");
+    return;
+  }
+
+  const updatedPlan = mergePlanData(plan, newPlanData);
+  setPlan(updatedPlan);
+  await saveToFirebase("plan", updatedPlan);
+  alert(`Freie Tage für ${MONTHS_DE[month]} ${year} gefüllt! (Max 4 Tage/Person, mind. 1x/Woche)`);
+}
   async function addServiceDay(dateStr, username) {
     const updatedPlan = mergePlanData(plan, { [dateStr]: username });
     setPlan(updatedPlan);
@@ -686,10 +705,15 @@ function ScheduleView({ users, currentUser, isAdmin, plan, setPlan, planFixed, s
         </select>
 
         {isAdmin && !isMonthFixed && (
-          <button onClick={generatePlan} style={{fontSize:14,padding:"6px 12px",background:"#639922",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}>
-            Plan generieren
-          </button>
-        )}
+  <>
+    <button onClick={generatePlan} style={{fontSize:14,padding:"6px 12px",background:"#639922",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}>
+      Plan generieren
+    </button>
+    <button onClick={generatePlanForFreeDaysOnly_Handler} style={{fontSize:14,padding:"6px 12px",background:"#0078D4",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}>
+      📝 Nur freie Tage füllen
+    </button>
+  </>
+)}
 
         {isAdmin && (
           <button onClick={togglePlanFixed} style={{fontSize:14,padding:"6px 12px",background:isMonthFixed ? "#d13438" : "#0078D4",color:"white",border:"none",borderRadius:4,cursor:"pointer"}}>
