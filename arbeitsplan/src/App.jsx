@@ -393,8 +393,18 @@ function AvailabilityView({ users, currentUser, isAdmin, availability, setAvaila
     };
   });
 
+  // Warnung für Nutzer mit weniger als 4 eingetragenen Arbeitstagen
+  const currentUserTracker = currentUser ? trackerUsers.find(u => u.username === currentUser.username) : null;
+  const belowRecommended = currentUserTracker ? currentUserTracker.greenDays < 4 : false;
+
   return (
     <div>
+      {belowRecommended && (
+        <div style={{marginBottom:12,padding:10,background:'#FFF4E5',border:'1px solid #FFD79B',borderRadius:6,color:'#7a4a00'}}>
+          <strong>Warnung:</strong> Du hast nur {currentUserTracker.greenDays} eingetragene Arbeitstage ({currentUserTracker.percent}%).
+          Das ist unter dem empfohlenen Minimum von 4 Tagen — du kannst trotzdem speichern.
+        </div>
+      )}
       <div style={{display:"flex",gap:12,marginBottom:"1.5rem",alignItems:"center",flexWrap:"wrap"}}>
         <select value={year} onChange={e=>setYear(parseInt(e.target.value))} style={{fontSize:14,padding:"6px 12px"}}>
           {[currentYear, currentYear + 1].map(y => <option key={y} value={y}>{y}</option>)}
