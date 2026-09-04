@@ -130,14 +130,26 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const userData = await loadFromFirebase(`users/${user.uid}`);
+
         if (userData) {
           setCurrentUser({ ...userData, uid: user.uid });
           setAuthUser(user);
           setView("app");
         } else {
-          signOut(auth);
-          setAuthUser(null);
-          setView("login");
+          const fallbackUserData = {
+            uid: user.uid,
+            email: user.email || "",
+            name: user.displayName || user.email?.split("@")[0] || "Neues Mitglied",
+            username: user.email?.split("@")[0] || `user_${user.uid.slice(0, 6)}`,
+            house: "USZ",
+            role: "user",
+            archived: false,
+          };
+
+          await saveToFirebase(`users/${user.uid}`, fallbackUserData);
+          setCurrentUser(fallbackUserData);
+          setAuthUser(user);
+          setView("app");
         }
       } else {
         setAuthUser(null);
